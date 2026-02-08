@@ -1,6 +1,6 @@
 use ansi_term::{
     ANSIString, ANSIStrings,
-    Colour::{Fixed, RGB},
+    Colour::{self, Fixed, RGB},
     Style,
 };
 use std::collections::BTreeMap;
@@ -479,12 +479,23 @@ fn add_hint(
     keys: &[KeyWithModifier],
     description: &str,
     colors: &Styling,
-) {
+    prev_bg: Option<Colour>,
+) -> Option<Colour> {
     if !keys.is_empty() {
+        // Add powerline arrow between hints
+        if let Some(prev) = prev_bg {
+            let current_bg = palette_match!(colors.ribbon_unselected.background);
+            parts.push(Style::new().fg(prev).on(current_bg).paint("\u{e0b0}"));
+        }
+
         let styled_keys = style_key_with_modifier(keys, colors);
         parts.extend(styled_keys);
         let styled_desc = style_description(description, colors);
         parts.extend(styled_desc);
+
+        Some(palette_match!(colors.text_unselected.background))
+    } else {
+        prev_bg
     }
 }
 
@@ -495,19 +506,20 @@ fn render_hints_for_mode(
 ) -> Vec<ANSIString<'static>> {
     let mut parts = vec![];
     let select_keys = get_select_key(keymap);
+    let mut prev_bg: Option<Colour> = None;
 
     match mode {
         InputMode::Normal => {
             for (action, label) in NORMAL_MODE_ACTIONS {
                 let keys = find_keys_for_actions(keymap, &[action.clone()], true);
-                add_hint(&mut parts, &keys, label, colors);
+                prev_bg = add_hint(&mut parts, &keys, label, colors, prev_bg);
             }
         }
         InputMode::Pane => {
             for (actions, label) in PANE_MODE_ACTION_SEQUENCES {
                 let keys = find_keys_for_actions(keymap, actions, false);
                 if !keys.is_empty() {
-                    add_hint(&mut parts, &keys, label, colors);
+                    prev_bg = add_hint(&mut parts, &keys, label, colors, prev_bg);
                 }
             }
 
@@ -520,7 +532,7 @@ fn render_hints_for_mode(
                 false,
             );
             if !rename_keys.is_empty() {
-                add_hint(&mut parts, &rename_keys, "rename", colors);
+                prev_bg = add_hint(&mut parts, &rename_keys, "rename", colors, prev_bg);
             }
 
             let focus_keys = find_keys_for_action_groups(
@@ -532,14 +544,14 @@ fn render_hints_for_mode(
                     &[Action::MoveFocus(Direction::Right)],
                 ],
             );
-            add_hint(&mut parts, &focus_keys, "move", colors);
-            add_hint(&mut parts, &select_keys, "select", colors);
+            prev_bg = add_hint(&mut parts, &focus_keys, "move", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &select_keys, "select", colors, prev_bg);
         }
         InputMode::Tab => {
             for (actions, label) in TAB_MODE_ACTION_SEQUENCES {
                 let keys = find_keys_for_actions(keymap, actions, false);
                 if !keys.is_empty() {
-                    add_hint(&mut parts, &keys, label, colors);
+                    prev_bg = add_hint(&mut parts, &keys, label, colors, prev_bg);
                 }
             }
 
@@ -552,7 +564,7 @@ fn render_hints_for_mode(
                 false,
             );
             if !rename_keys.is_empty() {
-                add_hint(&mut parts, &rename_keys, "rename", colors);
+                prev_bg = add_hint(&mut parts, &rename_keys, "rename", colors, prev_bg);
             }
 
             let focus_keys_full = find_keys_for_action_groups(
@@ -569,8 +581,8 @@ fn render_hints_for_mode(
             } else {
                 focus_keys_full
             };
-            add_hint(&mut parts, &focus_keys, "move", colors);
-            add_hint(&mut parts, &select_keys, "select", colors);
+            prev_bg = add_hint(&mut parts, &focus_keys, "move", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &select_keys, "select", colors, prev_bg);
         }
         InputMode::Resize => {
             let resize_keys = find_keys_for_action_groups(
@@ -580,7 +592,7 @@ fn render_hints_for_mode(
                     &[Action::Resize(Resize::Decrease, None)],
                 ],
             );
-            add_hint(&mut parts, &resize_keys, "resize", colors);
+            prev_bg = add_hint(&mut parts, &resize_keys, "resize", colors, prev_bg);
 
             let increase_keys = find_keys_for_action_groups(
                 keymap,
@@ -591,7 +603,7 @@ fn render_hints_for_mode(
                     &[Action::Resize(Resize::Increase, Some(Direction::Right))],
                 ],
             );
-            add_hint(&mut parts, &increase_keys, "increase", colors);
+            prev_bg = add_hint(&mut parts, &increase_keys, "increase", colors, prev_bg);
 
             let decrease_keys = find_keys_for_action_groups(
                 keymap,
@@ -602,8 +614,8 @@ fn render_hints_for_mode(
                     &[Action::Resize(Resize::Decrease, Some(Direction::Right))],
                 ],
             );
-            add_hint(&mut parts, &decrease_keys, "decrease", colors);
-            add_hint(&mut parts, &select_keys, "select", colors);
+            prev_bg = add_hint(&mut parts, &decrease_keys, "decrease", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &select_keys, "select", colors, prev_bg);
         }
         InputMode::Move => {
             let move_keys = find_keys_for_action_groups(
@@ -615,8 +627,8 @@ fn render_hints_for_mode(
                     &[Action::MovePane(Some(Direction::Right))],
                 ],
             );
-            add_hint(&mut parts, &move_keys, "move", colors);
-            add_hint(&mut parts, &select_keys, "select", colors);
+            prev_bg = add_hint(&mut parts, &move_keys, "move", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &select_keys, "select", colors, prev_bg);
         }
         InputMode::Scroll => {
             let search_keys = find_keys_for_actions(
@@ -627,30 +639,36 @@ fn render_hints_for_mode(
                 ],
                 true,
             );
-            add_hint(&mut parts, &search_keys, "search", colors);
+            prev_bg = add_hint(&mut parts, &search_keys, "search", colors, prev_bg);
 
             let scroll_keys =
                 find_keys_for_action_groups(keymap, &[&[Action::ScrollDown], &[Action::ScrollUp]]);
-            add_hint(&mut parts, &scroll_keys, "scroll", colors);
+            prev_bg = add_hint(&mut parts, &scroll_keys, "scroll", colors, prev_bg);
 
             let page_scroll_keys = find_keys_for_action_groups(
                 keymap,
                 &[&[Action::PageScrollDown], &[Action::PageScrollUp]],
             );
-            add_hint(&mut parts, &page_scroll_keys, "page", colors);
+            prev_bg = add_hint(&mut parts, &page_scroll_keys, "page", colors, prev_bg);
 
             let half_page_scroll_keys = find_keys_for_action_groups(
                 keymap,
                 &[&[Action::HalfPageScrollDown], &[Action::HalfPageScrollUp]],
             );
-            add_hint(&mut parts, &half_page_scroll_keys, "half page", colors);
+            prev_bg = add_hint(
+                &mut parts,
+                &half_page_scroll_keys,
+                "half page",
+                colors,
+                prev_bg,
+            );
 
             let edit_keys =
                 find_keys_for_actions(keymap, &[Action::EditScrollback, TO_NORMAL], false);
             if !edit_keys.is_empty() {
-                add_hint(&mut parts, &edit_keys, "edit", colors);
+                prev_bg = add_hint(&mut parts, &edit_keys, "edit", colors, prev_bg);
             }
-            add_hint(&mut parts, &select_keys, "select", colors);
+            prev_bg = add_hint(&mut parts, &select_keys, "select", colors, prev_bg);
         }
         InputMode::Search => {
             let search_keys = find_keys_for_actions(
@@ -661,96 +679,76 @@ fn render_hints_for_mode(
                 ],
                 true,
             );
-            add_hint(&mut parts, &search_keys, "search", colors);
+            prev_bg = add_hint(&mut parts, &search_keys, "search", colors, prev_bg);
 
             let scroll_keys =
                 find_keys_for_action_groups(keymap, &[&[Action::ScrollDown], &[Action::ScrollUp]]);
-            add_hint(&mut parts, &scroll_keys, "scroll", colors);
+            prev_bg = add_hint(&mut parts, &scroll_keys, "scroll", colors, prev_bg);
 
             let page_scroll_keys = find_keys_for_action_groups(
                 keymap,
                 &[&[Action::PageScrollDown], &[Action::PageScrollUp]],
             );
-            add_hint(&mut parts, &page_scroll_keys, "page", colors);
+            prev_bg = add_hint(&mut parts, &page_scroll_keys, "page", colors, prev_bg);
 
             let half_page_scroll_keys = find_keys_for_action_groups(
                 keymap,
                 &[&[Action::HalfPageScrollDown], &[Action::HalfPageScrollUp]],
             );
-            add_hint(&mut parts, &half_page_scroll_keys, "half page", colors);
+            prev_bg = add_hint(
+                &mut parts,
+                &half_page_scroll_keys,
+                "half page",
+                colors,
+                prev_bg,
+            );
 
             let down_keys =
                 find_keys_for_actions(keymap, &[Action::Search(SearchDirection::Down)], true);
-            add_hint(&mut parts, &down_keys, "down", colors);
+            prev_bg = add_hint(&mut parts, &down_keys, "down", colors, prev_bg);
 
             let up_keys =
                 find_keys_for_actions(keymap, &[Action::Search(SearchDirection::Up)], true);
-            add_hint(&mut parts, &up_keys, "up", colors);
+            prev_bg = add_hint(&mut parts, &up_keys, "up", colors, prev_bg);
 
-            add_hint(&mut parts, &select_keys, "select", colors);
+            prev_bg = add_hint(&mut parts, &select_keys, "select", colors, prev_bg);
         }
         InputMode::Session => {
             let detach_keys = find_keys_for_actions(keymap, &[Action::Detach], true);
-            add_hint(&mut parts, &detach_keys, "detach", colors);
+            prev_bg = add_hint(&mut parts, &detach_keys, "detach", colors, prev_bg);
 
             if let Some(manager_key) = plugin_key(keymap, PLUGIN_SESSION_MANAGER) {
-                add_hint(&mut parts, &[manager_key], "manager", colors);
+                prev_bg = add_hint(&mut parts, &[manager_key], "manager", colors, prev_bg);
             }
 
             if let Some(config_key) = plugin_key(keymap, PLUGIN_CONFIGURATION) {
-                add_hint(&mut parts, &[config_key], "config", colors);
+                prev_bg = add_hint(&mut parts, &[config_key], "config", colors, prev_bg);
             }
 
             if let Some(plugin_key_val) = plugin_key(keymap, PLUGIN_MANAGER) {
-                add_hint(&mut parts, &[plugin_key_val], "plugins", colors);
+                prev_bg = add_hint(&mut parts, &[plugin_key_val], "plugins", colors, prev_bg);
             }
 
             if let Some(about_key) = plugin_key(keymap, PLUGIN_ABOUT) {
-                add_hint(&mut parts, &[about_key], "about", colors);
+                prev_bg = add_hint(&mut parts, &[about_key], "about", colors, prev_bg);
             }
 
-            add_hint(&mut parts, &select_keys, "select", colors);
+            prev_bg = add_hint(&mut parts, &select_keys, "select", colors, prev_bg);
         }
         InputMode::Tmux => {
-            // Tmux mode - show common tmux-style actions
-            for (actions, label) in TMUX_MODE_ACTION_SEQUENCES {
-                let keys = find_keys_for_actions(keymap, actions, false);
-                if !keys.is_empty() {
-                    add_hint(&mut parts, &keys, label, colors);
-                }
-            }
-
-            // Navigation keys
-            let focus_keys = find_keys_for_action_groups(
-                keymap,
-                &[
-                    &[Action::MoveFocus(Direction::Left)],
-                    &[Action::MoveFocus(Direction::Down)],
-                    &[Action::MoveFocus(Direction::Up)],
-                    &[Action::MoveFocus(Direction::Right)],
-                ],
-            );
-            add_hint(&mut parts, &focus_keys, "navigate", colors);
-
-            // Tab navigation
-            let tab_keys = find_keys_for_action_groups(
-                keymap,
-                &[&[Action::GoToPreviousTab], &[Action::GoToNextTab]],
-            );
-            add_hint(&mut parts, &tab_keys, "tabs", colors);
-
-            // Gateway modes - show what modes are accessible from Tmux
+            // Gateway modes only - same pattern as Pane mode
             for (action, label) in TMUX_MODE_ACTIONS {
                 let keys = find_keys_for_actions(keymap, &[action.clone()], true);
-                add_hint(&mut parts, &keys, label, colors);
+                if !keys.is_empty() {
+                    prev_bg = add_hint(&mut parts, &keys, label, colors, prev_bg);
+                }
             }
-
-            add_hint(&mut parts, &select_keys, "exit", colors);
+            prev_bg = add_hint(&mut parts, &select_keys, "select", colors, prev_bg);
         }
         _ => {
             let keys =
                 find_keys_for_actions(keymap, &[Action::SwitchToMode(InputMode::Normal)], true);
-            add_hint(&mut parts, &keys, "normal", colors);
+            prev_bg = add_hint(&mut parts, &keys, "normal", colors, prev_bg);
         }
     }
 

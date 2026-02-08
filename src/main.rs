@@ -466,7 +466,7 @@ fn style_key_with_modifier(
     let key_display = format_key_display(key_bindings, &common_modifiers);
     let key_separator = get_key_separator(&key_display);
 
-    styled_parts.push(Style::new().paint(" "));
+    // No leading space - seamless with arrow
 
     if !modifier_str.is_empty() {
         styled_parts.push(
@@ -474,10 +474,8 @@ fn style_key_with_modifier(
                 .fg(theme.key_fg)
                 .on(theme.key_bg)
                 .bold()
-                .paint(format!(" {} + ", modifier_str)),
+                .paint(format!("{} + ", modifier_str)),
         );
-    } else {
-        styled_parts.push(Style::new().fg(theme.key_fg).on(theme.key_bg).paint(" "));
     }
 
     for (idx, key) in key_display.iter().enumerate() {
@@ -498,16 +496,17 @@ fn style_key_with_modifier(
         );
     }
 
-    styled_parts.push(Style::new().fg(theme.key_fg).on(theme.key_bg).paint(" "));
+    // No trailing space - arrow connects directly
 
     styled_parts
 }
 
 fn style_description(description: &str, theme: &ThemeColors) -> Vec<ANSIString<'static>> {
+    // No spaces around description - seamless with arrows
     vec![Style::new()
         .fg(theme.desc_fg)
         .on(theme.desc_bg)
-        .paint(format!(" {} ", description))]
+        .paint(format!("{}", description))]
 }
 
 fn plugin_key(

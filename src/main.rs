@@ -49,6 +49,39 @@ const NORMAL_MODE_ACTIONS: &[ActionLabel] = &[
     (Action::Quit, "quit"),
 ];
 
+// Tmux mode actions - gateway modes accessible from Tmux mode
+const TMUX_MODE_ACTIONS: &[ActionLabel] = &[
+    (Action::SwitchToMode(InputMode::Pane), "pane"),
+    (Action::SwitchToMode(InputMode::Tab), "tab"),
+    (Action::SwitchToMode(InputMode::Resize), "resize"),
+    (Action::SwitchToMode(InputMode::Move), "move"),
+    (Action::SwitchToMode(InputMode::Scroll), "scroll"),
+    (Action::SwitchToMode(InputMode::Session), "session"),
+    (Action::SwitchToMode(InputMode::Locked), "lock"),
+];
+
+// Tmux mode action sequences - common tmux-style operations
+const TMUX_MODE_ACTION_SEQUENCES: &[ActionSequenceLabel] = &[
+    (&[Action::NewPane(None, None, false), TO_NORMAL], "new"),
+    (
+        &[
+            Action::NewPane(Some(Direction::Right), None, false),
+            TO_NORMAL,
+        ],
+        "split right",
+    ),
+    (
+        &[
+            Action::NewPane(Some(Direction::Down), None, false),
+            TO_NORMAL,
+        ],
+        "split down",
+    ),
+    (&[Action::CloseFocus, TO_NORMAL], "close"),
+    (&[Action::ToggleFocusFullscreen, TO_NORMAL], "fullscreen"),
+    (&[Action::Detach], "detach"),
+];
+
 const PANE_MODE_ACTION_SEQUENCES: &[ActionSequenceLabel] = &[
     (&[Action::NewPane(None, None, false), TO_NORMAL], "new"),
     (&[Action::CloseFocus, TO_NORMAL], "close"),
@@ -278,10 +311,17 @@ fn find_keys_for_actions(
                 } else {
                     None
                 }
-            } else if key_actions.iter().next() == target_actions.iter().next() {
-                Some(key.clone())
             } else {
-                None
+                // FIX: Use shallow_eq for first action comparison instead of ==
+                // This fixes Pane mode which was showing "00" due to failed matching
+                match (key_actions.first(), target_actions.first()) {
+                    (Some(key_action), Some(target_action))
+                        if key_action.shallow_eq(target_action) =>
+                    {
+                        Some(key.clone())
+                    }
+                    _ => None,
+                }
             }
         })
         .collect()
@@ -671,6 +711,42 @@ fn render_hints_for_mode(
 
             add_hint(&mut parts, &select_keys, "select", colors);
         }
+        InputMode::Tmux => {
+            // Tmux mode - show common tmux-style actions
+            for (actions, label) in TMUX_MODE_ACTION_SEQUENCES {
+                let keys = find_keys_for_actions(keymap, actions, false);
+                if !keys.is_empty() {
+                    add_hint(&mut parts, &keys, label, colors);
+                }
+            }
+
+            // Navigation keys
+            let focus_keys = find_keys_for_action_groups(
+                keymap,
+                &[
+                    &[Action::MoveFocus(Direction::Left)],
+                    &[Action::MoveFocus(Direction::Down)],
+                    &[Action::MoveFocus(Direction::Up)],
+                    &[Action::MoveFocus(Direction::Right)],
+                ],
+            );
+            add_hint(&mut parts, &focus_keys, "navigate", colors);
+
+            // Tab navigation
+            let tab_keys = find_keys_for_action_groups(
+                keymap,
+                &[&[Action::GoToPreviousTab], &[Action::GoToNextTab]],
+            );
+            add_hint(&mut parts, &tab_keys, "tabs", colors);
+
+            // Gateway modes - show what modes are accessible from Tmux
+            for (action, label) in TMUX_MODE_ACTIONS {
+                let keys = find_keys_for_actions(keymap, &[action.clone()], true);
+                add_hint(&mut parts, &keys, label, colors);
+            }
+
+            add_hint(&mut parts, &select_keys, "exit", colors);
+        }
         _ => {
             let keys =
                 find_keys_for_actions(keymap, &[Action::SwitchToMode(InputMode::Normal)], true);
@@ -691,6 +767,7 @@ fn get_keymap_for_mode(mode_info: &ModeInfo) -> Vec<(KeyWithModifier, Vec<Action
         InputMode::Scroll => mode_info.get_keybinds_for_mode(InputMode::Scroll),
         InputMode::Search => mode_info.get_keybinds_for_mode(InputMode::Search),
         InputMode::Session => mode_info.get_keybinds_for_mode(InputMode::Session),
+        InputMode::Tmux => mode_info.get_keybinds_for_mode(InputMode::Tmux),
         _ => mode_info.get_mode_keybinds(),
     }
 }

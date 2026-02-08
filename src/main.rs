@@ -240,11 +240,12 @@ impl ZellijPlugin for State {
         should_render
     }
 
-    fn render(&mut self, _rows: usize, _cols: usize) {
+    fn render(&mut self, _rows: usize, cols: usize) {
         let mode_info = &self.mode_info;
         let output = if !(self.hide_in_base_mode && Some(mode_info.mode) == mode_info.base_mode) {
             let keymap = get_keymap_for_mode(mode_info);
-            let parts = render_hints_for_mode(mode_info.mode, &keymap, &self.theme);
+            // Pass available width for responsive hint display
+            let parts = render_hints_for_mode(mode_info.mode, &keymap, &self.theme, cols);
 
             let ansi_strings = ANSIStrings(&parts);
             let formatted = format!(" {}", ansi_strings);
@@ -424,6 +425,16 @@ fn format_modifier_short(m: &KeyModifier) -> &'static str {
     }
 }
 
+fn format_key_short(key: &KeyWithModifier) -> String {
+    let modifiers: Vec<KeyModifier> = key.key_modifiers.iter().cloned().collect();
+    let mods = format_modifier_string(&modifiers);
+    if mods.is_empty() {
+        format!("{}", key.bare_key)
+    } else {
+        format!("{}{}", mods, key.bare_key)
+    }
+}
+
 fn format_key_display(
     key_bindings: &[KeyWithModifier],
     common_modifiers: &[KeyModifier],
@@ -431,20 +442,22 @@ fn format_key_display(
     key_bindings
         .iter()
         .map(|key| {
-            if common_modifiers.is_empty() {
-                format!("{}", key)
+            // Always use short format (^n) instead of long format (Ctrl n)
+            let unique_modifiers = key
+                .key_modifiers
+                .iter()
+                .filter(|m| !common_modifiers.contains(m))
+                .map(|m| format_modifier_short(m))
+                .collect::<String>();
+            if key
+                .key_modifiers
+                .iter()
+                .all(|m| common_modifiers.contains(m))
+            {
+                // All modifiers are common, just show bare key
+                format!("{}", key.bare_key)
             } else {
-                let unique_modifiers = key
-                    .key_modifiers
-                    .iter()
-                    .filter(|m| !common_modifiers.contains(m))
-                    .map(|m| format_modifier_short(m))
-                    .collect::<String>();
-                if unique_modifiers.is_empty() {
-                    format!("{}", key.bare_key)
-                } else {
-                    format!("{}{}", unique_modifiers, key.bare_key)
-                }
+                format!("{}{}", unique_modifiers, key.bare_key)
             }
         })
         .collect()
@@ -474,7 +487,8 @@ fn style_key_with_modifier(
     let key_display = format_key_display(key_bindings, &common_modifiers);
     let key_separator = get_key_separator(&key_display);
 
-    // No leading space - seamless with arrow
+    // Add leading space for readability
+    styled_parts.push(Style::new().fg(theme.key_fg).on(theme.key_bg).paint(" "));
 
     if !modifier_str.is_empty() {
         styled_parts.push(
@@ -504,17 +518,18 @@ fn style_key_with_modifier(
         );
     }
 
-    // No trailing space - arrow connects directly
+    // Add trailing space for readability before description arrow
+    styled_parts.push(Style::new().fg(theme.key_fg).on(theme.key_bg).paint(" "));
 
     styled_parts
 }
 
 fn style_description(description: &str, theme: &ThemeColors) -> Vec<ANSIString<'static>> {
-    // Add leading space for separation from key, no trailing space (arrow handles that)
+    // Add leading and trailing spaces for better readability
     vec![Style::new()
         .fg(theme.desc_fg)
         .on(theme.desc_bg)
-        .paint(format!(" {}", description))]
+        .paint(format!(" {} ", description))]
 }
 
 fn plugin_key(
@@ -580,6 +595,7 @@ fn render_hints_for_mode(
     mode: InputMode,
     keymap: &[(KeyWithModifier, Vec<Action>)],
     theme: &ThemeColors,
+    available_width: usize,
 ) -> Vec<ANSIString<'static>> {
     let mut parts = vec![];
     let select_keys = get_select_key(keymap);
@@ -813,15 +829,62 @@ fn render_hints_for_mode(
             prev_bg = add_hint(&mut parts, &select_keys, "select", theme, prev_bg);
         }
         InputMode::Tmux => {
-            // Gateway modes only (pane, tab, resize, etc.)
-            // Curated hints on left show: Space, -|v, c, x, z, [, d
+            // Gateway modes only - responsive based on available width
+            // Wide (>100): full labels | Medium (>60): short labels | Narrow (<60): minimal
+            let is_narrow = available_width < 60;
+            let is_medium = available_width < 100;
+
             for (action, label) in TMUX_MODE_ACTIONS {
                 let keys = find_keys_for_actions(keymap, &[action.clone()], true);
                 if !keys.is_empty() {
-                    prev_bg = add_hint(&mut parts, &keys, label, theme, prev_bg);
+                    let display_label = label;
+
+                    // Special handling for scroll: show both ^s and [ keys
+                    if *label == "scroll" && keys.len() >= 2 {
+                        // Display scroll with combined keys: "^s | [" or "^s|["
+                        let separator = if is_narrow { "|" } else { " | " };
+                        let combined_label = format!(
+                            "{}{}{}",
+                            format_key_short(&keys[0]),
+                            separator,
+                            format_key_short(&keys[1])
+                        );
+                        // Create a single key representation with combined display
+                        let combined_key = KeyWithModifier::new(BareKey::Char(' '));
+                        // Add arrow and styled combined key
+                        if let Some(bg) = prev_bg {
+                            parts.push(Style::new().fg(bg).on(theme.key_bg).paint("\u{e0b0}"));
+                        }
+                        parts.push(
+                            Style::new()
+                                .fg(theme.key_fg)
+                                .on(theme.key_bg)
+                                .bold()
+                                .paint(format!(" {} ", combined_label)),
+                        );
+                        parts.push(
+                            Style::new()
+                                .fg(theme.key_bg)
+                                .on(theme.desc_bg)
+                                .paint("\u{e0b0}"),
+                        );
+                        parts.push(
+                            Style::new()
+                                .fg(theme.desc_fg)
+                                .on(theme.desc_bg)
+                                .paint(format!(" {}", display_label)),
+                        );
+                        prev_bg = Some(theme.desc_bg);
+                    } else {
+                        prev_bg = add_hint(&mut parts, &keys, display_label, theme, prev_bg);
+                    }
                 }
             }
-            prev_bg = add_hint(&mut parts, &select_keys, "select", theme, prev_bg);
+
+            // Only show "select" hint if we have space
+            if !is_narrow {
+                prev_bg = add_hint(&mut parts, &select_keys, "select", theme, prev_bg);
+            }
         }
         _ => {
             let keys =

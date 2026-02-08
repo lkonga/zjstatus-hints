@@ -502,11 +502,11 @@ fn style_key_with_modifier(
 }
 
 fn style_description(description: &str, theme: &ThemeColors) -> Vec<ANSIString<'static>> {
-    // No spaces around description - seamless with arrows
+    // Add leading space for separation from key, no trailing space (arrow handles that)
     vec![Style::new()
         .fg(theme.desc_fg)
         .on(theme.desc_bg)
-        .paint(format!("{}", description))]
+        .paint(format!(" {}", description))]
 }
 
 fn plugin_key(
@@ -542,13 +542,22 @@ fn add_hint(
     prev_bg: Option<Colour>,
 ) -> Option<Colour> {
     if !keys.is_empty() {
-        // Add powerline arrow between hints
+        // Add powerline arrow between hints (from previous desc to current key)
         if let Some(prev) = prev_bg {
             parts.push(Style::new().fg(prev).on(theme.key_bg).paint("\u{e0b0}"));
         }
 
         let styled_keys = style_key_with_modifier(keys, theme);
         parts.extend(styled_keys);
+
+        // Add arrow between key and description within this hint
+        parts.push(
+            Style::new()
+                .fg(theme.key_bg)
+                .on(theme.desc_bg)
+                .paint("\u{e0b0}"),
+        );
+
         let styled_desc = style_description(description, theme);
         parts.extend(styled_desc);
 

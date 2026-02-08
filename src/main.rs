@@ -1,13 +1,68 @@
-use ansi_term::{
-    ANSIString, ANSIStrings,
-    Colour::{self, Fixed, RGB},
-    Style,
-};
+use ansi_term::{ANSIString, ANSIStrings, Colour, Style};
 use std::collections::BTreeMap;
 use zellij_tile::prelude::actions::Action;
 use zellij_tile::prelude::actions::SearchDirection;
 use zellij_tile::prelude::*;
-use zellij_tile_utils::palette_match;
+
+/// Theme colors for the hints plugin
+/// Supports hex color strings (e.g., "#45475a") from plugin configuration
+#[derive(Clone)]
+struct ThemeColors {
+    key_bg: Colour,
+    key_fg: Colour,
+    desc_bg: Colour,
+    desc_fg: Colour,
+}
+
+impl Default for ThemeColors {
+    fn default() -> Self {
+        Self {
+            key_bg: parse_hex_color(DEFAULT_KEY_BG),
+            key_fg: parse_hex_color(DEFAULT_KEY_FG),
+            desc_bg: parse_hex_color(DEFAULT_DESC_BG),
+            desc_fg: parse_hex_color(DEFAULT_DESC_FG),
+        }
+    }
+}
+
+impl ThemeColors {
+    fn from_config(configuration: &BTreeMap<String, String>) -> Self {
+        Self {
+            key_bg: configuration
+                .get("key_bg")
+                .map(|s| parse_hex_color(s))
+                .unwrap_or_else(|| parse_hex_color(DEFAULT_KEY_BG)),
+            key_fg: configuration
+                .get("key_fg")
+                .map(|s| parse_hex_color(s))
+                .unwrap_or_else(|| parse_hex_color(DEFAULT_KEY_FG)),
+            desc_bg: configuration
+                .get("desc_bg")
+                .map(|s| parse_hex_color(s))
+                .unwrap_or_else(|| parse_hex_color(DEFAULT_DESC_BG)),
+            desc_fg: configuration
+                .get("desc_fg")
+                .map(|s| parse_hex_color(s))
+                .unwrap_or_else(|| parse_hex_color(DEFAULT_DESC_FG)),
+        }
+    }
+}
+
+/// Parse a hex color string (e.g., "#45475a" or "45475a") into an ansi_term Colour
+fn parse_hex_color(hex: &str) -> Colour {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() == 6 {
+        if let (Ok(r), Ok(g), Ok(b)) = (
+            u8::from_str_radix(&hex[0..2], 16),
+            u8::from_str_radix(&hex[2..4], 16),
+            u8::from_str_radix(&hex[4..6], 16),
+        ) {
+            return Colour::RGB(r, g, b);
+        }
+    }
+    // Fallback to default key_bg color if parsing fails
+    Colour::RGB(0x45, 0x47, 0x5a)
+}
 
 #[derive(Default)]
 struct State {
@@ -18,11 +73,8 @@ struct State {
     max_length: usize,
     overflow_str: String,
     hide_in_base_mode: bool,
-    // Color configuration for theming
-    key_bg: String,
-    key_fg: String,
-    desc_bg: String,
-    desc_fg: String,
+    // Theme colors for styling
+    theme: ThemeColors,
 }
 
 register_plugin!(State);
@@ -164,23 +216,8 @@ impl ZellijPlugin for State {
             .map(|s| s.to_lowercase().parse::<bool>().unwrap_or(false))
             .unwrap_or(false);
 
-        // Color theming configuration
-        self.key_bg = configuration
-            .get("key_bg")
-            .cloned()
-            .unwrap_or_else(|| DEFAULT_KEY_BG.to_string());
-        self.key_fg = configuration
-            .get("key_fg")
-            .cloned()
-            .unwrap_or_else(|| DEFAULT_KEY_FG.to_string());
-        self.desc_bg = configuration
-            .get("desc_bg")
-            .cloned()
-            .unwrap_or_else(|| DEFAULT_DESC_BG.to_string());
-        self.desc_fg = configuration
-            .get("desc_fg")
-            .cloned()
-            .unwrap_or_else(|| DEFAULT_DESC_FG.to_string());
+        // Theme colors from configuration (defaults to Catppuccin Frappe)
+        self.theme = ThemeColors::from_config(&configuration);
 
         request_permission(&[
             PermissionType::ReadApplicationState,
@@ -207,7 +244,7 @@ impl ZellijPlugin for State {
         let mode_info = &self.mode_info;
         let output = if !(self.hide_in_base_mode && Some(mode_info.mode) == mode_info.base_mode) {
             let keymap = get_keymap_for_mode(mode_info);
-            let parts = render_hints_for_mode(mode_info.mode, &keymap, &mode_info.style.colors);
+            let parts = render_hints_for_mode(mode_info.mode, &keymap, &self.theme);
 
             let ansi_strings = ANSIStrings(&parts);
             let formatted = format!(" {}", ansi_strings);
@@ -416,15 +453,12 @@ fn get_key_separator(key_display: &[String]) -> &'static str {
 
 fn style_key_with_modifier(
     key_bindings: &[KeyWithModifier],
-    _palette: &Styling,
+    theme: &ThemeColors,
 ) -> Vec<ANSIString<'static>> {
     if key_bindings.is_empty() {
         return vec![];
     }
 
-    // Catppuccin Frappe colors matching the left side
-    let key_bg = Colour::RGB(0x45, 0x47, 0x5a); // surface1 #45475a
-    let key_fg = Colour::RGB(0xc6, 0xd0, 0xf5); // text #c6d0f5
     let mut styled_parts = vec![];
 
     let common_modifiers = get_common_modifiers(key_bindings.iter().collect());
@@ -437,35 +471,42 @@ fn style_key_with_modifier(
     if !modifier_str.is_empty() {
         styled_parts.push(
             Style::new()
-                .fg(key_fg)
-                .on(key_bg)
+                .fg(theme.key_fg)
+                .on(theme.key_bg)
                 .bold()
                 .paint(format!(" {} + ", modifier_str)),
         );
     } else {
-        styled_parts.push(Style::new().fg(key_fg).on(key_bg).paint(" "));
+        styled_parts.push(Style::new().fg(theme.key_fg).on(theme.key_bg).paint(" "));
     }
 
     for (idx, key) in key_display.iter().enumerate() {
         if idx > 0 && !key_separator.is_empty() {
-            styled_parts.push(Style::new().fg(key_fg).on(key_bg).paint(key_separator));
+            styled_parts.push(
+                Style::new()
+                    .fg(theme.key_fg)
+                    .on(theme.key_bg)
+                    .paint(key_separator),
+            );
         }
-        styled_parts.push(Style::new().fg(key_fg).on(key_bg).bold().paint(key.clone()));
+        styled_parts.push(
+            Style::new()
+                .fg(theme.key_fg)
+                .on(theme.key_bg)
+                .bold()
+                .paint(key.clone()),
+        );
     }
 
-    styled_parts.push(Style::new().fg(key_fg).on(key_bg).paint(" "));
+    styled_parts.push(Style::new().fg(theme.key_fg).on(theme.key_bg).paint(" "));
 
     styled_parts
 }
 
-fn style_description(description: &str, _palette: &Styling) -> Vec<ANSIString<'static>> {
-    // Catppuccin Frappe colors matching the left side
-    let desc_bg = Colour::RGB(0x31, 0x32, 0x44); // surface0 #313244
-    let desc_fg = Colour::RGB(0xba, 0xc2, 0xde); // text2 #bac2de
-
+fn style_description(description: &str, theme: &ThemeColors) -> Vec<ANSIString<'static>> {
     vec![Style::new()
-        .fg(desc_fg)
-        .on(desc_bg)
+        .fg(theme.desc_fg)
+        .on(theme.desc_bg)
         .paint(format!(" {} ", description))]
 }
 
@@ -498,26 +539,22 @@ fn add_hint(
     parts: &mut Vec<ANSIString<'static>>,
     keys: &[KeyWithModifier],
     description: &str,
-    colors: &Styling,
+    theme: &ThemeColors,
     prev_bg: Option<Colour>,
 ) -> Option<Colour> {
     if !keys.is_empty() {
-        // Catppuccin Frappe colors
-        let key_bg = Colour::RGB(0x45, 0x47, 0x5a); // surface1 #45475a
-        let desc_bg = Colour::RGB(0x31, 0x32, 0x44); // surface0 #313244
-
         // Add powerline arrow between hints
         if let Some(prev) = prev_bg {
-            parts.push(Style::new().fg(prev).on(key_bg).paint("\u{e0b0}"));
+            parts.push(Style::new().fg(prev).on(theme.key_bg).paint("\u{e0b0}"));
         }
 
-        let styled_keys = style_key_with_modifier(keys, colors);
+        let styled_keys = style_key_with_modifier(keys, theme);
         parts.extend(styled_keys);
-        let styled_desc = style_description(description, colors);
+        let styled_desc = style_description(description, theme);
         parts.extend(styled_desc);
 
         // Return desc_bg as the next prev_bg for arrow continuity
-        Some(desc_bg)
+        Some(theme.desc_bg)
     } else {
         prev_bg
     }
@@ -526,7 +563,7 @@ fn add_hint(
 fn render_hints_for_mode(
     mode: InputMode,
     keymap: &[(KeyWithModifier, Vec<Action>)],
-    colors: &Styling,
+    theme: &ThemeColors,
 ) -> Vec<ANSIString<'static>> {
     let mut parts = vec![];
     let select_keys = get_select_key(keymap);
@@ -536,14 +573,14 @@ fn render_hints_for_mode(
         InputMode::Normal => {
             for (action, label) in NORMAL_MODE_ACTIONS {
                 let keys = find_keys_for_actions(keymap, &[action.clone()], true);
-                prev_bg = add_hint(&mut parts, &keys, label, colors, prev_bg);
+                prev_bg = add_hint(&mut parts, &keys, label, theme, prev_bg);
             }
         }
         InputMode::Pane => {
             for (actions, label) in PANE_MODE_ACTION_SEQUENCES {
                 let keys = find_keys_for_actions(keymap, actions, false);
                 if !keys.is_empty() {
-                    prev_bg = add_hint(&mut parts, &keys, label, colors, prev_bg);
+                    prev_bg = add_hint(&mut parts, &keys, label, theme, prev_bg);
                 }
             }
 
@@ -556,7 +593,7 @@ fn render_hints_for_mode(
                 false,
             );
             if !rename_keys.is_empty() {
-                prev_bg = add_hint(&mut parts, &rename_keys, "rename", colors, prev_bg);
+                prev_bg = add_hint(&mut parts, &rename_keys, "rename", theme, prev_bg);
             }
 
             let focus_keys = find_keys_for_action_groups(
@@ -568,14 +605,14 @@ fn render_hints_for_mode(
                     &[Action::MoveFocus(Direction::Right)],
                 ],
             );
-            prev_bg = add_hint(&mut parts, &focus_keys, "move", colors, prev_bg);
-            prev_bg = add_hint(&mut parts, &select_keys, "select", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &focus_keys, "move", theme, prev_bg);
+            prev_bg = add_hint(&mut parts, &select_keys, "select", theme, prev_bg);
         }
         InputMode::Tab => {
             for (actions, label) in TAB_MODE_ACTION_SEQUENCES {
                 let keys = find_keys_for_actions(keymap, actions, false);
                 if !keys.is_empty() {
-                    prev_bg = add_hint(&mut parts, &keys, label, colors, prev_bg);
+                    prev_bg = add_hint(&mut parts, &keys, label, theme, prev_bg);
                 }
             }
 
@@ -588,7 +625,7 @@ fn render_hints_for_mode(
                 false,
             );
             if !rename_keys.is_empty() {
-                prev_bg = add_hint(&mut parts, &rename_keys, "rename", colors, prev_bg);
+                prev_bg = add_hint(&mut parts, &rename_keys, "rename", theme, prev_bg);
             }
 
             let focus_keys_full = find_keys_for_action_groups(
@@ -605,8 +642,8 @@ fn render_hints_for_mode(
             } else {
                 focus_keys_full
             };
-            prev_bg = add_hint(&mut parts, &focus_keys, "move", colors, prev_bg);
-            prev_bg = add_hint(&mut parts, &select_keys, "select", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &focus_keys, "move", theme, prev_bg);
+            prev_bg = add_hint(&mut parts, &select_keys, "select", theme, prev_bg);
         }
         InputMode::Resize => {
             let resize_keys = find_keys_for_action_groups(
@@ -616,7 +653,7 @@ fn render_hints_for_mode(
                     &[Action::Resize(Resize::Decrease, None)],
                 ],
             );
-            prev_bg = add_hint(&mut parts, &resize_keys, "resize", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &resize_keys, "resize", theme, prev_bg);
 
             let increase_keys = find_keys_for_action_groups(
                 keymap,
@@ -627,7 +664,7 @@ fn render_hints_for_mode(
                     &[Action::Resize(Resize::Increase, Some(Direction::Right))],
                 ],
             );
-            prev_bg = add_hint(&mut parts, &increase_keys, "increase", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &increase_keys, "increase", theme, prev_bg);
 
             let decrease_keys = find_keys_for_action_groups(
                 keymap,
@@ -638,8 +675,8 @@ fn render_hints_for_mode(
                     &[Action::Resize(Resize::Decrease, Some(Direction::Right))],
                 ],
             );
-            prev_bg = add_hint(&mut parts, &decrease_keys, "decrease", colors, prev_bg);
-            prev_bg = add_hint(&mut parts, &select_keys, "select", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &decrease_keys, "decrease", theme, prev_bg);
+            prev_bg = add_hint(&mut parts, &select_keys, "select", theme, prev_bg);
         }
         InputMode::Move => {
             let move_keys = find_keys_for_action_groups(
@@ -651,8 +688,8 @@ fn render_hints_for_mode(
                     &[Action::MovePane(Some(Direction::Right))],
                 ],
             );
-            prev_bg = add_hint(&mut parts, &move_keys, "move", colors, prev_bg);
-            prev_bg = add_hint(&mut parts, &select_keys, "select", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &move_keys, "move", theme, prev_bg);
+            prev_bg = add_hint(&mut parts, &select_keys, "select", theme, prev_bg);
         }
         InputMode::Scroll => {
             let search_keys = find_keys_for_actions(
@@ -663,17 +700,17 @@ fn render_hints_for_mode(
                 ],
                 true,
             );
-            prev_bg = add_hint(&mut parts, &search_keys, "search", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &search_keys, "search", theme, prev_bg);
 
             let scroll_keys =
                 find_keys_for_action_groups(keymap, &[&[Action::ScrollDown], &[Action::ScrollUp]]);
-            prev_bg = add_hint(&mut parts, &scroll_keys, "scroll", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &scroll_keys, "scroll", theme, prev_bg);
 
             let page_scroll_keys = find_keys_for_action_groups(
                 keymap,
                 &[&[Action::PageScrollDown], &[Action::PageScrollUp]],
             );
-            prev_bg = add_hint(&mut parts, &page_scroll_keys, "page", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &page_scroll_keys, "page", theme, prev_bg);
 
             let half_page_scroll_keys = find_keys_for_action_groups(
                 keymap,
@@ -683,16 +720,16 @@ fn render_hints_for_mode(
                 &mut parts,
                 &half_page_scroll_keys,
                 "half page",
-                colors,
+                theme,
                 prev_bg,
             );
 
             let edit_keys =
                 find_keys_for_actions(keymap, &[Action::EditScrollback, TO_NORMAL], false);
             if !edit_keys.is_empty() {
-                prev_bg = add_hint(&mut parts, &edit_keys, "edit", colors, prev_bg);
+                prev_bg = add_hint(&mut parts, &edit_keys, "edit", theme, prev_bg);
             }
-            prev_bg = add_hint(&mut parts, &select_keys, "select", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &select_keys, "select", theme, prev_bg);
         }
         InputMode::Search => {
             let search_keys = find_keys_for_actions(
@@ -703,17 +740,17 @@ fn render_hints_for_mode(
                 ],
                 true,
             );
-            prev_bg = add_hint(&mut parts, &search_keys, "search", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &search_keys, "search", theme, prev_bg);
 
             let scroll_keys =
                 find_keys_for_action_groups(keymap, &[&[Action::ScrollDown], &[Action::ScrollUp]]);
-            prev_bg = add_hint(&mut parts, &scroll_keys, "scroll", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &scroll_keys, "scroll", theme, prev_bg);
 
             let page_scroll_keys = find_keys_for_action_groups(
                 keymap,
                 &[&[Action::PageScrollDown], &[Action::PageScrollUp]],
             );
-            prev_bg = add_hint(&mut parts, &page_scroll_keys, "page", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &page_scroll_keys, "page", theme, prev_bg);
 
             let half_page_scroll_keys = find_keys_for_action_groups(
                 keymap,
@@ -723,56 +760,56 @@ fn render_hints_for_mode(
                 &mut parts,
                 &half_page_scroll_keys,
                 "half page",
-                colors,
+                theme,
                 prev_bg,
             );
 
             let down_keys =
                 find_keys_for_actions(keymap, &[Action::Search(SearchDirection::Down)], true);
-            prev_bg = add_hint(&mut parts, &down_keys, "down", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &down_keys, "down", theme, prev_bg);
 
             let up_keys =
                 find_keys_for_actions(keymap, &[Action::Search(SearchDirection::Up)], true);
-            prev_bg = add_hint(&mut parts, &up_keys, "up", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &up_keys, "up", theme, prev_bg);
 
-            prev_bg = add_hint(&mut parts, &select_keys, "select", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &select_keys, "select", theme, prev_bg);
         }
         InputMode::Session => {
             let detach_keys = find_keys_for_actions(keymap, &[Action::Detach], true);
-            prev_bg = add_hint(&mut parts, &detach_keys, "detach", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &detach_keys, "detach", theme, prev_bg);
 
             if let Some(manager_key) = plugin_key(keymap, PLUGIN_SESSION_MANAGER) {
-                prev_bg = add_hint(&mut parts, &[manager_key], "manager", colors, prev_bg);
+                prev_bg = add_hint(&mut parts, &[manager_key], "manager", theme, prev_bg);
             }
 
             if let Some(config_key) = plugin_key(keymap, PLUGIN_CONFIGURATION) {
-                prev_bg = add_hint(&mut parts, &[config_key], "config", colors, prev_bg);
+                prev_bg = add_hint(&mut parts, &[config_key], "config", theme, prev_bg);
             }
 
             if let Some(plugin_key_val) = plugin_key(keymap, PLUGIN_MANAGER) {
-                prev_bg = add_hint(&mut parts, &[plugin_key_val], "plugins", colors, prev_bg);
+                prev_bg = add_hint(&mut parts, &[plugin_key_val], "plugins", theme, prev_bg);
             }
 
             if let Some(about_key) = plugin_key(keymap, PLUGIN_ABOUT) {
-                prev_bg = add_hint(&mut parts, &[about_key], "about", colors, prev_bg);
+                prev_bg = add_hint(&mut parts, &[about_key], "about", theme, prev_bg);
             }
 
-            prev_bg = add_hint(&mut parts, &select_keys, "select", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &select_keys, "select", theme, prev_bg);
         }
         InputMode::Tmux => {
             // Gateway modes only - same pattern as Pane mode
             for (action, label) in TMUX_MODE_ACTIONS {
                 let keys = find_keys_for_actions(keymap, &[action.clone()], true);
                 if !keys.is_empty() {
-                    prev_bg = add_hint(&mut parts, &keys, label, colors, prev_bg);
+                    prev_bg = add_hint(&mut parts, &keys, label, theme, prev_bg);
                 }
             }
-            prev_bg = add_hint(&mut parts, &select_keys, "select", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &select_keys, "select", theme, prev_bg);
         }
         _ => {
             let keys =
                 find_keys_for_actions(keymap, &[Action::SwitchToMode(InputMode::Normal)], true);
-            prev_bg = add_hint(&mut parts, &keys, "normal", colors, prev_bg);
+            prev_bg = add_hint(&mut parts, &keys, "normal", theme, prev_bg);
         }
     }
 

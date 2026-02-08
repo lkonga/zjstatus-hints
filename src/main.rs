@@ -18,6 +18,11 @@ struct State {
     max_length: usize,
     overflow_str: String,
     hide_in_base_mode: bool,
+    // Color configuration for theming
+    key_bg: String,
+    key_fg: String,
+    desc_bg: String,
+    desc_fg: String,
 }
 
 register_plugin!(State);
@@ -34,6 +39,12 @@ const KEY_PATTERNS_NO_SEPARATOR: &[&str] = &["HJKL", "hjkl", "←↓↑→", "�
 const DEFAULT_MAX_LENGTH: usize = 0;
 const DEFAULT_OVERFLOW_STR: &str = "...";
 const DEFAULT_PIPE_NAME: &str = "zjstatus_hints";
+
+// Default Catppuccin Frappe colors
+const DEFAULT_KEY_BG: &str = "#45475a"; // surface1
+const DEFAULT_KEY_FG: &str = "#c6d0f5"; // text
+const DEFAULT_DESC_BG: &str = "#313244"; // surface0
+const DEFAULT_DESC_FG: &str = "#bac2de"; // text2
 
 type ActionLabel = (Action, &'static str);
 type ActionSequenceLabel = (&'static [Action], &'static str);
@@ -152,6 +163,24 @@ impl ZellijPlugin for State {
             .get("hide_in_base_mode")
             .map(|s| s.to_lowercase().parse::<bool>().unwrap_or(false))
             .unwrap_or(false);
+
+        // Color theming configuration
+        self.key_bg = configuration
+            .get("key_bg")
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_KEY_BG.to_string());
+        self.key_fg = configuration
+            .get("key_fg")
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_KEY_FG.to_string());
+        self.desc_bg = configuration
+            .get("desc_bg")
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_DESC_BG.to_string());
+        self.desc_fg = configuration
+            .get("desc_fg")
+            .cloned()
+            .unwrap_or_else(|| DEFAULT_DESC_FG.to_string());
 
         request_permission(&[
             PermissionType::ReadApplicationState,
@@ -387,14 +416,15 @@ fn get_key_separator(key_display: &[String]) -> &'static str {
 
 fn style_key_with_modifier(
     key_bindings: &[KeyWithModifier],
-    palette: &Styling,
+    _palette: &Styling,
 ) -> Vec<ANSIString<'static>> {
     if key_bindings.is_empty() {
         return vec![];
     }
 
-    let saturated_bg = palette_match!(palette.ribbon_unselected.background);
-    let contrasting_fg = palette_match!(palette.ribbon_unselected.base);
+    // Catppuccin Frappe colors matching the left side
+    let key_bg = Colour::RGB(0x45, 0x47, 0x5a); // surface1 #45475a
+    let key_fg = Colour::RGB(0xc6, 0xd0, 0xf5); // text #c6d0f5
     let mut styled_parts = vec![];
 
     let common_modifiers = get_common_modifiers(key_bindings.iter().collect());
@@ -407,45 +437,35 @@ fn style_key_with_modifier(
     if !modifier_str.is_empty() {
         styled_parts.push(
             Style::new()
-                .fg(contrasting_fg)
-                .on(saturated_bg)
+                .fg(key_fg)
+                .on(key_bg)
                 .bold()
                 .paint(format!(" {} + ", modifier_str)),
         );
     } else {
-        styled_parts.push(Style::new().fg(contrasting_fg).on(saturated_bg).paint(" "));
+        styled_parts.push(Style::new().fg(key_fg).on(key_bg).paint(" "));
     }
 
     for (idx, key) in key_display.iter().enumerate() {
         if idx > 0 && !key_separator.is_empty() {
-            styled_parts.push(
-                Style::new()
-                    .fg(contrasting_fg)
-                    .on(saturated_bg)
-                    .paint(key_separator),
-            );
+            styled_parts.push(Style::new().fg(key_fg).on(key_bg).paint(key_separator));
         }
-        styled_parts.push(
-            Style::new()
-                .fg(contrasting_fg)
-                .on(saturated_bg)
-                .bold()
-                .paint(key.clone()),
-        );
+        styled_parts.push(Style::new().fg(key_fg).on(key_bg).bold().paint(key.clone()));
     }
 
-    styled_parts.push(Style::new().fg(contrasting_fg).on(saturated_bg).paint(" "));
+    styled_parts.push(Style::new().fg(key_fg).on(key_bg).paint(" "));
 
     styled_parts
 }
 
-fn style_description(description: &str, palette: &Styling) -> Vec<ANSIString<'static>> {
-    let less_saturated_bg = palette_match!(palette.text_unselected.background);
-    let contrasting_fg = palette_match!(palette.text_unselected.base);
+fn style_description(description: &str, _palette: &Styling) -> Vec<ANSIString<'static>> {
+    // Catppuccin Frappe colors matching the left side
+    let desc_bg = Colour::RGB(0x31, 0x32, 0x44); // surface0 #313244
+    let desc_fg = Colour::RGB(0xba, 0xc2, 0xde); // text2 #bac2de
 
     vec![Style::new()
-        .fg(contrasting_fg)
-        .on(less_saturated_bg)
+        .fg(desc_fg)
+        .on(desc_bg)
         .paint(format!(" {} ", description))]
 }
 
@@ -482,10 +502,13 @@ fn add_hint(
     prev_bg: Option<Colour>,
 ) -> Option<Colour> {
     if !keys.is_empty() {
+        // Catppuccin Frappe colors
+        let key_bg = Colour::RGB(0x45, 0x47, 0x5a); // surface1 #45475a
+        let desc_bg = Colour::RGB(0x31, 0x32, 0x44); // surface0 #313244
+
         // Add powerline arrow between hints
         if let Some(prev) = prev_bg {
-            let current_bg = palette_match!(colors.ribbon_unselected.background);
-            parts.push(Style::new().fg(prev).on(current_bg).paint("\u{e0b0}"));
+            parts.push(Style::new().fg(prev).on(key_bg).paint("\u{e0b0}"));
         }
 
         let styled_keys = style_key_with_modifier(keys, colors);
@@ -493,7 +516,8 @@ fn add_hint(
         let styled_desc = style_description(description, colors);
         parts.extend(styled_desc);
 
-        Some(palette_match!(colors.text_unselected.background))
+        // Return desc_bg as the next prev_bg for arrow continuity
+        Some(desc_bg)
     } else {
         prev_bg
     }

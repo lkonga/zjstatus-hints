@@ -409,9 +409,18 @@ fn format_modifier_string(modifiers: &[KeyModifier]) -> String {
     } else {
         modifiers
             .iter()
-            .map(|m| m.to_string())
-            .collect::<Vec<_>>()
-            .join("-")
+            .map(|m| format_modifier_short(m))
+            .collect::<String>()
+    }
+}
+
+fn format_modifier_short(m: &KeyModifier) -> &'static str {
+    match m {
+        KeyModifier::Ctrl => "^",
+        KeyModifier::Alt => "M-",
+        KeyModifier::Shift => "S-",
+        KeyModifier::Super => "Super-",
+        _ => "",
     }
 }
 
@@ -429,13 +438,12 @@ fn format_key_display(
                     .key_modifiers
                     .iter()
                     .filter(|m| !common_modifiers.contains(m))
-                    .map(|m| m.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                    .map(|m| format_modifier_short(m))
+                    .collect::<String>();
                 if unique_modifiers.is_empty() {
                     format!("{}", key.bare_key)
                 } else {
-                    format!("{} {}", unique_modifiers, key.bare_key)
+                    format!("{}{}", unique_modifiers, key.bare_key)
                 }
             }
         })
@@ -474,7 +482,7 @@ fn style_key_with_modifier(
                 .fg(theme.key_fg)
                 .on(theme.key_bg)
                 .bold()
-                .paint(format!("{} + ", modifier_str)),
+                .paint(modifier_str.to_string()),
         );
     }
 
@@ -805,7 +813,8 @@ fn render_hints_for_mode(
             prev_bg = add_hint(&mut parts, &select_keys, "select", theme, prev_bg);
         }
         InputMode::Tmux => {
-            // Gateway modes only - same pattern as Pane mode
+            // Gateway modes only (pane, tab, resize, etc.)
+            // Curated hints on left show: Space, -|v, c, x, z, [, d
             for (action, label) in TMUX_MODE_ACTIONS {
                 let keys = find_keys_for_actions(keymap, &[action.clone()], true);
                 if !keys.is_empty() {

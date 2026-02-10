@@ -2,6 +2,7 @@ use ansi_term::{ANSIString, ANSIStrings, Colour, Style};
 use std::collections::BTreeMap;
 use zellij_tile::prelude::actions::Action;
 use zellij_tile::prelude::actions::SearchDirection;
+use zellij_tile::prelude::actions::SearchOption;
 use zellij_tile::prelude::*;
 
 /// Theme colors for the hints plugin
@@ -165,6 +166,9 @@ const PANE_MODE_ACTION_SEQUENCES: &[ActionSequenceLabel] = &[
         ],
         "split down",
     ),
+    (&[Action::NewPane(None, None, true), TO_NORMAL], "stack"),
+    (&[Action::TogglePaneFrames, TO_NORMAL], "frames"),
+    (&[Action::SwitchFocus], "prev"),
 ];
 
 const TAB_MODE_ACTION_SEQUENCES: &[ActionSequenceLabel] = &[
@@ -176,8 +180,11 @@ const TAB_MODE_ACTION_SEQUENCES: &[ActionSequenceLabel] = &[
         "new",
     ),
     (&[Action::CloseTab, TO_NORMAL], "close"),
-    (&[Action::BreakPane, TO_NORMAL], "break pane"),
+    (&[Action::BreakPane, TO_NORMAL], "break"),
+    (&[Action::BreakPaneLeft, TO_NORMAL], "← tab"),
+    (&[Action::BreakPaneRight, TO_NORMAL], "→ tab"),
     (&[Action::ToggleActiveSyncTab, TO_NORMAL], "sync"),
+    (&[Action::ToggleTab], "last"),
 ];
 
 fn get_common_modifiers(mut key_bindings: Vec<&KeyWithModifier>) -> Vec<KeyModifier> {
@@ -721,6 +728,16 @@ fn render_hints_for_mode(
                 ],
             );
             prev_bg = add_hint(&mut parts, &move_keys, "move", theme, prev_bg);
+
+            // Rotate pane forward (MovePane without direction)
+            let rotate_keys = find_keys_for_actions(keymap, &[Action::MovePane(None)], true);
+            prev_bg = add_hint(&mut parts, &rotate_keys, "rotate", theme, prev_bg);
+
+            // Rotate pane backward
+            let rotate_back_keys =
+                find_keys_for_actions(keymap, &[Action::MovePaneBackwards], true);
+            prev_bg = add_hint(&mut parts, &rotate_back_keys, "back", theme, prev_bg);
+
             prev_bg = add_hint(&mut parts, &select_keys, "select", theme, prev_bg);
         }
         InputMode::Scroll => {
@@ -761,6 +778,14 @@ fn render_hints_for_mode(
             if !edit_keys.is_empty() {
                 prev_bg = add_hint(&mut parts, &edit_keys, "edit", theme, prev_bg);
             }
+
+            // ScrollToTop / ScrollToBottom
+            let top_keys = find_keys_for_actions(keymap, &[Action::ScrollToTop], true);
+            prev_bg = add_hint(&mut parts, &top_keys, "top", theme, prev_bg);
+
+            let bottom_keys = find_keys_for_actions(keymap, &[Action::ScrollToBottom], true);
+            prev_bg = add_hint(&mut parts, &bottom_keys, "bottom", theme, prev_bg);
+
             prev_bg = add_hint(&mut parts, &select_keys, "select", theme, prev_bg);
         }
         InputMode::Search => {
@@ -803,6 +828,28 @@ fn render_hints_for_mode(
             let up_keys =
                 find_keys_for_actions(keymap, &[Action::Search(SearchDirection::Up)], true);
             prev_bg = add_hint(&mut parts, &up_keys, "up", theme, prev_bg);
+
+            // Search toggle options
+            let case_keys = find_keys_for_actions(
+                keymap,
+                &[Action::SearchToggleOption(SearchOption::CaseSensitivity)],
+                true,
+            );
+            prev_bg = add_hint(&mut parts, &case_keys, "case", theme, prev_bg);
+
+            let wrap_keys = find_keys_for_actions(
+                keymap,
+                &[Action::SearchToggleOption(SearchOption::Wrap)],
+                true,
+            );
+            prev_bg = add_hint(&mut parts, &wrap_keys, "wrap", theme, prev_bg);
+
+            let whole_keys = find_keys_for_actions(
+                keymap,
+                &[Action::SearchToggleOption(SearchOption::WholeWord)],
+                true,
+            );
+            prev_bg = add_hint(&mut parts, &whole_keys, "word", theme, prev_bg);
 
             prev_bg = add_hint(&mut parts, &select_keys, "select", theme, prev_bg);
         }
